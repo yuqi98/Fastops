@@ -1,7 +1,18 @@
 #include "Fastops.h"
 
 using namespace std;
-using namespace mkldnn;
+//using namespace mkldnn;
+
+#define checkCUDNN(expression)                               \
+{                                                          \
+	cudnnStatus_t status = (expression);                     \
+	if (status != CUDNN_STATUS_SUCCESS) {                    \
+	  std::cerr << "Error on line " << __LINE__ << ": "      \
+	            << cudnnGetErrorString(status) << std::endl; \
+	  std::exit(EXIT_FAILURE);                               \
+	}                                                        \
+}
+
 
 namespace Fastops{
 	
@@ -97,6 +108,151 @@ namespace Fastops{
                 { MKLDNN_ARG_DST, conv_dst_memory } });
 
 		return conv_dst_memory;
+	}
+
+
+	//gpu part:
+
+	cudnnHandle_t gpu_init(int argc, char **argv)
+	{
+		int gpu_id = (argc > 2) ? std::atoi(argv[2]) : 0;
+		cudaSetDevice(gpu_id);
+		cudnnHandle_t cudnn{nullptr};	
+		cudnnCreate(&cudnn);
+
+		return cudnn;
+	}
+
+	float* gpu_convolutional_layer(cudnnHandle_t cudnn, int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding, float* h_kernel, float* input_image)
+	{
+		cudnnTensorDescriptor_t input_descriptor;
+		checkCUDNN(cudnnCreateTensorDescriptor(&input_descriptor));
+		checkCUDNN(cudnnSetTensor4dDescriptor(input_descriptor,
+                            /*format=*/CUDNN_TENSOR_NHWC,
+                          /*dataType=*/CUDNN_DATA_FLOAT,
+                        /*batch_size=*/batch,
+                          /*channels=*/input_channel,
+                      /*image_height=*/height,
+                       /*image_width=*/width));
+
+  		cudnnTensorDescriptor_t output_descriptor;
+  		checkCUDNN(cudnnCreateTensorDescriptor(&output_descriptor));
+  		checkCUDNN(cudnnSetTensor4dDescriptor(output_descriptor,
+                            /*format=*/CUDNN_TENSOR_NHWC,
+                          /*dataType=*/CUDNN_DATA_FLOAT,
+                        /*batch_size=*/batch,
+                          /*channels=*/output_channel,
+                      /*image_height=*/height,
+                       /*image_width=*/width));
+
+		cudnnFilterDescriptor_t kernel_descriptor;
+	    checkCUDNN(cudnnCreateFilterDescriptor(&kernel_descriptor));
+	    checkCUDNN(cudnnSetFilter4dDescriptor(kernel_descriptor,
+	                          /*dataType=*/CUDNN_DATA_FLOAT,
+	                            /*format=*/CUDNN_TENSOR_NCHW,
+	                      /*out_channels=*/input_channel,
+	                       /*in_channels=*/output_channel,
+	                     /*kernel_height=*/height,
+	                      /*kernel_width=*/width));
+
+		cudnnConvolutionDescriptor_t convolution_descriptor;
+	    checkCUDNN(cudnnCreateConvolutionDescriptor(&convolution_descriptor));
+	    checkCUDNN(cudnnSetConvolution2dDescriptor(convolution_descriptor,
+	                              /*pad_height=*/padding,
+	                               /*pad_width=*/padding,
+	                         /*vertical_stride=*/stride,
+	                       /*horizontal_stride=*/stride,
+	                         /*dilation_height=*/height,
+	                          /*dilation_width=*/width,
+	                                    /*mode=*/CUDNN_CROSS_CORRELATION,
+	                             /*computeType=*/CUDNN_DATA_FLOAT));
+	    
+	    cudnnConvolutionFwdAlgo_t convolution_algorithm;
+  		checkCUDNN(
+    	cudnnGetConvolutionForwardAlgorithm(cudnn,
+                                        input_descriptor,
+                                        kernel_descriptor,
+                                        convolution_descriptor,
+                                        output_descriptor,
+                                        CUDNN_CONVOLUTION_FWD_PREFER_FASTEST,
+                                        /*memoryLimitInBytes=*/0,
+                                        &convolution_algorithm));
+
+  		const float alpha = 1.0f, beta = 0.0f;
+  		cudnnActivationDescriptor_t activation_descriptor;
+  		checkCUDNN(cudnnCreateActivationDescriptor(&activation_descriptor));
+  		checkCUDNN(cudnnSetActivationDescriptor(activation_descriptor,
+                                 /*mode=*/CUDNN_ACTIVATION_RELU,
+                           /*reluNanOpt=*/CUDNN_PROPAGATE_NAN,
+                            /*relu_coef=*/0));
+  		
+  		size_t workspace_bytes = 0;
+  		checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(cudnn,
+                                                   input_descriptor,
+                                                   kernel_descriptor,
+                                                   convolution_descriptor,
+                                                   output_descriptor,
+                                                   convolution_algorithm,
+                                                   &workspace_bytes));
+  		assert(workspace_bytes > 0);
+
+  		void* d_workspace{nullptr};
+  		cudaMalloc(&d_workspace, workspace_bytes);
+
+  		int input_image_bytes = batch * input_channel * height * width * sizeof(float);
+  		int output_image_bytes = batch * output_channel * height * width * sizeof(float);
+
+  		float* d_kernel{nullptr};
+  		cudaMalloc(&d_kernel, sizeof(h_kernel));
+  		cudaMemcpy(d_kernel, h_kernel, sizeof(h_kernel), cudaMemcpyHostToDevice);
+
+  		float* d_input{nullptr};
+    	cudaMalloc(&d_input, input_image_bytes);
+    	cudaMemcpy(d_input, input_image, input_image_bytes, cudaMemcpyHostToDevice);
+
+    	float* d_output{nullptr};
+    	cudaMalloc(&d_output, output_image_bytes);
+    	cudaMemset(d_output, 0, output_image_bytes);
+
+    	checkCUDNN(cudnnConvolutionForward(cudnn,
+                                     &alpha,
+                                     input_descriptor,
+                                     d_input,
+                                     kernel_descriptor,
+                                     d_kernel,
+                                     convolution_descriptor,
+                                     convolution_algorithm,
+                                     d_workspace,
+                                     workspace_bytes,
+                                     &beta,
+                                     output_descriptor,
+                                     d_output));
+    	checkCUDNN(cudnnActivationForward(cudnn,
+                                      activation_descriptor,
+                                      &alpha,
+                                      output_descriptor,
+                                      d_output,
+                                      &beta,
+                                      output_descriptor,
+                                      d_output));
+    	
+    	float* h_output = new float[output_image_bytes];
+
+   		cudaMemcpy(h_output, d_output, output_image_bytes, cudaMemcpyDeviceToHost);
+    	
+    	cudaFree(d_input);
+    	cudaFree(d_output);
+    	cudaFree(d_kernel);
+  		cudaFree(d_workspace);
+
+		cudnnDestroyTensorDescriptor(input_descriptor);
+		cudnnDestroyTensorDescriptor(output_descriptor);
+		cudnnDestroyFilterDescriptor(kernel_descriptor);
+		cudnnDestroyConvolutionDescriptor(convolution_descriptor);
+		checkCUDNN(cudnnDestroyActivationDescriptor(activation_descriptor));
+
+		return(h_output);
+
 	}
 
 
