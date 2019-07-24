@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
-//#include "mkldnn.hpp"
+#include "mkldnn.hpp"
 #include <cudnn.h>
 
 

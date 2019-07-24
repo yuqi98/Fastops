@@ -52,12 +52,10 @@ int main(int argc, char **argv)
 
   auto t1 = high_resolution_clock::now();
   float* h_output = Fastops::gpu_convolutional_layer(cudnn, 1, 3, n, n, 64, 5, 1, 2, h_kernel, input_image);
-  
+
   for(int i = 1; i < 5; i++)
-    h_output = Fastops::gpu_convolutional_layer(cudnn, 1, 3, n, n, 64, 5, 1, 2, h_kernel, h_output);
+    h_output = Fastops::gpu_convolutional_layer(cudnn, 1, 64, n, n, 64, 5, 1, 2, h_kernel2, h_output);
 
-
-	
   auto t2 = high_resolution_clock::now();
   auto duration = duration_cast<microseconds>(t2 - t1); 
 

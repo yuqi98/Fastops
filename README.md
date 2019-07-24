@@ -7,9 +7,8 @@ g++ -shared -o libFastops.so Fastops.o -I path_to_mkldnn/include/ -lmkldnn
 
 library compile with cudnn:
 
-g++ -std=c++11 -O2 -fpic -c -I /usr/local/cuda/include -L /usr/local/cuda/lib64 -L/usr/local/lib Fastops.cpp -lcudnn
-
-g++ -shared -o libFastops.so Fastops.o -I /usr/local/cuda/include -L /usr/local/cuda/lib64 -L/usr/local/lib -lcudnn
+g++ -c Fastops.cpp -I /usr/local/cuda/include -L /usr/local/cuda/lib64 -L /usr/local/lib
+ar rvs Fastops.a Fastops.o
 
 compile with actually code
 
@@ -18,7 +17,7 @@ g++ -std=c++11 fastops_test_cpu.cpp -o fastops_test_cpu -I path_to_mkldnn/includ
 
 gpu example:
 
-/usr/local/cuda/bin/nvcc -arch=sm_35 -std=c++11 -O2 -I /usr/local/cuda/include -L /usr/local/cuda/lib64 -L /usr/local/lib -L ./ fastops_gpu_test.cpp -lcudnn -lFastops
+/usr/local/cuda/bin/nvcc -arch=sm_35 -std=c++11 -I /usr/local/cuda/include -L /usr/local/cuda/lib64 -L /usr/local/lib -L /usr/local/cuda/lib64/libcudart_static.a -L ./ fastops_gpu_test.cpp -lcudnn Fastops.a
 
 
 

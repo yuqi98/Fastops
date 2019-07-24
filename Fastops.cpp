@@ -1,7 +1,7 @@
 #include "Fastops.h"
 
 using namespace std;
-//using namespace mkldnn;
+using namespace mkldnn;
 
 #define checkCUDNN(expression)                               \
 {                                                          \
@@ -109,7 +109,7 @@ namespace Fastops{
 
 		return conv_dst_memory;
 	}
-
+	
 
 	//gpu part:
 
@@ -150,10 +150,10 @@ namespace Fastops{
 	    checkCUDNN(cudnnSetFilter4dDescriptor(kernel_descriptor,
 	                          /*dataType=*/CUDNN_DATA_FLOAT,
 	                            /*format=*/CUDNN_TENSOR_NCHW,
-	                      /*out_channels=*/input_channel,
-	                       /*in_channels=*/output_channel,
-	                     /*kernel_height=*/height,
-	                      /*kernel_width=*/width));
+	                      /*out_channels=*/output_channel,
+	                       /*in_channels=*/input_channel,
+	                     /*kernel_height=*/kernel,
+	                      /*kernel_width=*/kernel));
 
 		cudnnConvolutionDescriptor_t convolution_descriptor;
 	    checkCUDNN(cudnnCreateConvolutionDescriptor(&convolution_descriptor));
@@ -162,8 +162,8 @@ namespace Fastops{
 	                               /*pad_width=*/padding,
 	                         /*vertical_stride=*/stride,
 	                       /*horizontal_stride=*/stride,
-	                         /*dilation_height=*/height,
-	                          /*dilation_width=*/width,
+	                         /*dilation_height=*/stride,
+	                          /*dilation_width=*/stride,
 	                                    /*mode=*/CUDNN_CROSS_CORRELATION,
 	                             /*computeType=*/CUDNN_DATA_FLOAT));
 	    
