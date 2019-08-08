@@ -4,31 +4,51 @@ using namespace std;
 using namespace mkldnn;
 using namespace Fastops;
 
-memory::dim Fastops_cpu::product(const memory::dims &dims) {
+memory::dim Data_cpu::product(const memory::dims &dims) {
 return std::accumulate(dims.begin(), dims.end(), (memory::dim)1,
         std::multiplies<memory::dim>());
 }
 
-void Fastops_cpu::init_with_input(int argc, char **argv, int batch, int input_channel, int width, int height)
+void Data_cpu::init(int argc, char **argv)
 {
-    using tag = memory::format_tag;
-    using dt = memory::data_type;
-	std::vector<float> user_src(batch * input_channel * width * height);
-    memory::dims conv_src_tz = {batch, input_channel, width, height};
     engine eng_new(engine::kind::cpu, 0);
     eng = eng_new;
     stream s_new(eng);
     s = s_new;
-    memory user_src_memory = memory(
-            { { conv_src_tz }, dt::f32, tag::nchw }, eng, user_src.data());
-    current = user_src_memory;
 
 }
-void Fastops_cpu::convolution_layer_relu(int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding)
+
+void Data_cpu::set_data(std::vector<float> input, int batch, int input_channel, int width, int height)
+{
+    using tag = memory::format_tag;
+    using dt = memory::data_type;
+    memory::dims conv_src_tz = {batch, input_channel, width, height};
+    memory user_src_memory = memory(
+            { { conv_src_tz }, dt::f32, tag::nchw }, eng, input.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
+    
+    current = user_src_memory;
+    
+    //dimensions also saved in 
+    //memory_desc_t dst = get_desc(current) --> dst.dims = {batch, input_channel, height, width}
+
+    dimensions.push_back(batch);
+    dimensions.push_back(input_channel);
+    dimensions.push_back(height);
+    dimensions.push_back(width);
+}
+
+std::vector<float> Data_cpu::get_data(memory current_data)
+{
+    float *result = static_cast<float *>(current_data.get_data_handle());
+    std::vector<float> re {result, result + dimensions[0]*dimensions[1]*dimensions[2]*dimensions[3]};
+    return re;
+}
+
+
+void Data_cpu::convolution_layer(int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding)
 {
 	using tag = memory::format_tag;
     using dt = memory::data_type;
-    stream s(eng);
 
 
     memory::dims conv_src_tz = { batch, input_channel, width, height };
@@ -84,7 +104,10 @@ void Fastops_cpu::convolution_layer_relu(int batch, int input_channel, int width
             { MKLDNN_ARG_BIAS, conv_user_bias_memory },
             { MKLDNN_ARG_DST, current} });
 
+}
 
+void Data_cpu::relu(int batch, int input_channel, int width, int height, int output_channel)
+{
     const float negative_slope = 1.0f;
 
     auto relu_desc = eltwise_forward::desc(prop_kind::forward_inference,
@@ -96,3 +119,6 @@ void Fastops_cpu::convolution_layer_relu(int batch, int input_channel, int width
     net_args.push_back({ { MKLDNN_ARG_SRC, current },
             { MKLDNN_ARG_DST, current } });
 }
+
+
+

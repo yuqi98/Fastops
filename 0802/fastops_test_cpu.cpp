@@ -28,14 +28,22 @@ int main(int argc, char **argv) {
         int n = 32;
 
         int batch = 1;
-        Fastops_cpu mynet;
+        Data_cpu mynet;
 
-        mynet.init_with_input(argc, argv, batch, 3, n, n);
+        mynet.init(argc, argv);
 
-        mynet.convolution_layer_relu(batch, 3, n, n, 64, 5, 1, 2);
+        std::vector<float> input_image(batch*3*n*n);
+
+        mynet.set_data(input_image,batch,3,n,n);
+
+        mynet.convolution_layer(batch, 3, n, n, 64, 5, 1, 2);
+        mynet.relu(batch,64,n,n,64);
 
         for(int i = 1; i < 10; i++)
-            mynet.convolution_layer_relu(batch, 64, n, n, 64, 5, 1, 2);
+        {
+            mynet.convolution_layer(batch, 64, n, n, 64, 5, 1, 2);
+            mynet.relu(batch,64,n,n,64);
+        }
 
         auto t1 = high_resolution_clock::now();
         for (int j = 0; j < times; ++j) {
@@ -50,9 +58,12 @@ int main(int argc, char **argv) {
 
 
         mynet.s.wait();
+        
         auto end = chrono::duration_cast<chrono::milliseconds>(
                 chrono::steady_clock::now().time_since_epoch())
                            .count();
+
+        vector<float> results = mynet.get_data(mynet.current);
         cout << "Use time " << (end - begin) / (times + 0.0) << "\n";
     } catch (error &e) {
         std::cerr << "status: " << e.status << std::endl;

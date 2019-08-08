@@ -17,7 +17,7 @@ using namespace mkldnn;
 
 namespace Fastops{
 
-class Fastops_cpu{
+class Data_cpu{
 	public:
 		
 		engine eng;
@@ -30,12 +30,19 @@ class Fastops_cpu{
 
 		memory current;
 		
+		vector<int> dimensions;
+
 		memory::dim product(const memory::dims &dims);
 
-		void init_with_input(int argc, char **argv, int batch, int input_channel, int width, int height);
+		void init(int argc, char **argv);
 
-		void convolution_layer_relu(int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding);
+		void set_data(std::vector<float> input, int batch, int input_channel, int width, int height);
 
+		std::vector<float> get_data(memory current_data);
+
+		void convolution_layer(int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding);
+
+		void relu(int batch, int input_channel, int width, int height, int output_channel);
 
 };
 
