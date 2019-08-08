@@ -18,11 +18,21 @@ void Data_cpu::init(int argc, char **argv)
 
 }
 
-void Data_cpu::set_data(std::vector<float> input, int batch, int input_channel, int width, int height)
+void Data_cpu::set_data(std::vector<float> input, std::vector<int> input_size)
 {
     using tag = memory::format_tag;
     using dt = memory::data_type;
-    memory::dims conv_src_tz = {batch, input_channel, width, height};
+
+    int total_size = input_size[0];
+    dimensions.push_back(input_size[0]);
+
+    for(int i = 1; i < input_size.size(); i++)
+    {
+        total_size *= input_size[i];
+        dimensions.push_back(input_size[i]);
+    }
+
+    memory::dims conv_src_tz = {dimensions[0], dimensions[1], dimensions[2], dimensions[3]};
     memory user_src_memory = memory(
             { { conv_src_tz }, dt::f32, tag::nchw }, eng, input.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
     
@@ -31,10 +41,6 @@ void Data_cpu::set_data(std::vector<float> input, int batch, int input_channel, 
     //dimensions also saved in 
     //memory_desc_t dst = get_desc(current) --> dst.dims = {batch, input_channel, height, width}
 
-    dimensions.push_back(batch);
-    dimensions.push_back(input_channel);
-    dimensions.push_back(height);
-    dimensions.push_back(width);
 }
 
 std::vector<float> Data_cpu::get_data(memory current_data)
@@ -45,16 +51,16 @@ std::vector<float> Data_cpu::get_data(memory current_data)
 }
 
 
-void Data_cpu::convolution_layer(int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding)
+void Data_cpu::convolution_layer(int output_channel, int kernel, int stride, int padding)
 {
 	using tag = memory::format_tag;
     using dt = memory::data_type;
 
 
-    memory::dims conv_src_tz = { batch, input_channel, width, height };
-    memory::dims conv_weights_tz = { output_channel, input_channel, kernel, kernel };
+    memory::dims conv_src_tz = { dimensions[0], dimensions[1], dimensions[2], dimensions[3]};
+    memory::dims conv_weights_tz = { output_channel, dimensions[1], kernel, kernel };
     memory::dims conv_bias_tz = { output_channel };
-    memory::dims conv_dst_tz = { batch, output_channel, width, height};
+    memory::dims conv_dst_tz = { dimensions[0], output_channel, dimensions[2], dimensions[3]};
     memory::dims conv_strides = { stride, stride };
     memory::dims conv_padding = { padding, padding };
 
@@ -97,7 +103,8 @@ void Data_cpu::convolution_layer(int batch, int input_channel, int width, int he
     }
 
     current = memory(conv_prim_desc.dst_desc(), eng);
-	
+	dimensions[1] = output_channel;
+
 	net.push_back(convolution_forward(conv_prim_desc));
     net_args.push_back({ { MKLDNN_ARG_SRC, conv_src_memory },
             { MKLDNN_ARG_WEIGHTS, conv_weights_memory },
@@ -106,7 +113,7 @@ void Data_cpu::convolution_layer(int batch, int input_channel, int width, int he
 
 }
 
-void Data_cpu::relu(int batch, int input_channel, int width, int height, int output_channel)
+void Data_cpu::relu()
 {
     const float negative_slope = 1.0f;
 

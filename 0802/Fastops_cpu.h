@@ -36,13 +36,13 @@ class Data_cpu{
 
 		void init(int argc, char **argv);
 
-		void set_data(std::vector<float> input, int batch, int input_channel, int width, int height);
+		void set_data(std::vector<float> input, std::vector<int> input_size);
 
 		std::vector<float> get_data(memory current_data);
 
-		void convolution_layer(int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding);
+		void convolution_layer(int output_channel, int kernel, int stride, int padding);
 
-		void relu(int batch, int input_channel, int width, int height, int output_channel);
+		void relu();
 
 };
 

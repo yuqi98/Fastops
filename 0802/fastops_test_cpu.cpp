@@ -33,16 +33,23 @@ int main(int argc, char **argv) {
         mynet.init(argc, argv);
 
         std::vector<float> input_image(batch*3*n*n);
+        
+        vector<int> input_size(4);
+        input_size[0] = batch;
+        input_size[1] = 3;
+        input_size[2] = n;
+        input_size[3] = n;
+        
+        
+        mynet.set_data(input_image,input_size);
 
-        mynet.set_data(input_image,batch,3,n,n);
-
-        mynet.convolution_layer(batch, 3, n, n, 64, 5, 1, 2);
-        mynet.relu(batch,64,n,n,64);
+        mynet.convolution_layer(64, 5, 1, 2);
+        mynet.relu();
 
         for(int i = 1; i < 10; i++)
         {
-            mynet.convolution_layer(batch, 64, n, n, 64, 5, 1, 2);
-            mynet.relu(batch,64,n,n,64);
+            mynet.convolution_layer(64, 5, 1, 2);
+            mynet.relu();
         }
 
         auto t1 = high_resolution_clock::now();
