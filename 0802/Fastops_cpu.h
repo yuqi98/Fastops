@@ -11,38 +11,40 @@
 #include <vector>
 
 #include "mkldnn.hpp"
+#include <tbb/parallel_for.h>
 
 using namespace std;
 using namespace mkldnn;
 
 namespace Fastops{
 
-class Data_cpu{
+class Tensor_cpu{
 	public:
-		
 		engine eng;
-
 		stream s;
 
-		vector<primitive> net;
+		void set_data(std::vector<float> input, std::vector<int> input_size);
 
-		vector<unordered_map<int, memory>> net_args;
+		std::vector<float> get_data();
+
+		void convolution_layer(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, int output_channel, int kernel, int stride, int padding);
+
+		void relu(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args);
+
+		memory get_value();
+
+		std::vector<int> get_dim();
+		
+		void element_product(Tensor_cpu mul);
+
+		void element_add(Tensor_cpu added);
+
+	private:
+		
 
 		memory current;
 		
 		vector<int> dimensions;
-
-		memory::dim product(const memory::dims &dims);
-
-		void init(int argc, char **argv);
-
-		void set_data(std::vector<float> input, std::vector<int> input_size);
-
-		std::vector<float> get_data(memory current_data);
-
-		void convolution_layer(int output_channel, int kernel, int stride, int padding);
-
-		void relu();
 
 };
 

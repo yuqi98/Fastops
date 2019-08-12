@@ -15,7 +15,7 @@ using namespace chrono;
 }
 
 
-float* Data_gpu::init_kernel(int input_channel, int output_channel, int kernel)
+float* Tensor_gpu::init_kernel(int input_channel, int output_channel, int kernel)
 {
   srand(time(NULL));
   float min = -1;
@@ -34,52 +34,49 @@ float* Data_gpu::init_kernel(int input_channel, int output_channel, int kernel)
   return h_kernel;
 }
 
-void Data_gpu::init(int argc, char **argv)
+void Tensor_gpu::set_data(std::vector<float> input, std::vector<int> input_size)
 {
-  int gpu_id = (argc > 2) ? std::atoi(argv[2]) : 0;
-  cudaSetDevice(gpu_id);
   cudnnHandle_t cudnn_new{nullptr}; 
   cudnnCreate(&cudnn_new);
+  this->cudnn = cudnn_new;  
 
-  cudnn = cudnn_new;
+  this->current = &input[0];
+
+  for(int i = 0; i < input_size.size(); i++)
+    this->dimensions.push_back(input_size[i]);
 }
 
-void Data_gpu::set_data(vector<float> input, int batch, int input_channel, int width, int height)
-{  
-  current = &input[0];
-  dimensions.push_back(batch);
-  dimensions.push_back(input_channel);
-  dimensions.push_back(height);
-  dimensions.push_back(width);
-}
-
-std::vector<float> Data_gpu::get_data(float* current_data)
+std::vector<float> Tensor_gpu::get_data()
 {
-  std::vector<float> result {current_data, current_data + dimensions[0]*dimensions[1]*dimensions[2]*dimensions[3]};
+  int total_size = this->dimensions[0];
+  for(int i = 1; i < this->dimensions.size(); i++)
+    total_size *= this->dimensions[i];
+
+  std::vector<float> result {this->current, this->current + total_size};
   return result;
 }
 
-void Data_gpu::convolution_layer(int batch, int input_channel, int width, int height, int output_channel, int kernel, int stride, int padding)
+void Tensor_gpu::convolution_layer(int output_channel, int kernel, int stride, int padding)
 {
 	cudnnTensorDescriptor_t input_descriptor;
 	checkCUDNN(cudnnCreateTensorDescriptor(&input_descriptor));
 	checkCUDNN(cudnnSetTensor4dDescriptor(input_descriptor,
                           /*format=*/CUDNN_TENSOR_NHWC,
                         /*dataType=*/CUDNN_DATA_FLOAT,
-                      /*batch_size=*/batch,
-                        /*channels=*/input_channel,
-                    /*image_height=*/height,
-                     /*image_width=*/width));
+                      /*batch_size=*/this->dimensions[0],
+                        /*channels=*/this->dimensions[1],
+                    /*image_height=*/this->dimensions[2],
+                     /*image_width=*/this->dimensions[3]));
 
 		cudnnTensorDescriptor_t output_descriptor;
 		checkCUDNN(cudnnCreateTensorDescriptor(&output_descriptor));
 		checkCUDNN(cudnnSetTensor4dDescriptor(output_descriptor,
                           /*format=*/CUDNN_TENSOR_NHWC,
                         /*dataType=*/CUDNN_DATA_FLOAT,
-                      /*batch_size=*/batch,
+                      /*batch_size=*/this->dimensions[0],
                         /*channels=*/output_channel,
-                    /*image_height=*/height,
-                     /*image_width=*/width));
+                    /*image_height=*/this->dimensions[2],
+                     /*image_width=*/this->dimensions[3]));
 
 	cudnnFilterDescriptor_t kernel_descriptor;
     checkCUDNN(cudnnCreateFilterDescriptor(&kernel_descriptor));
@@ -87,7 +84,7 @@ void Data_gpu::convolution_layer(int batch, int input_channel, int width, int he
                           /*dataType=*/CUDNN_DATA_FLOAT,
                             /*format=*/CUDNN_TENSOR_NCHW,
                       /*out_channels=*/output_channel,
-                       /*in_channels=*/input_channel,
+                       /*in_channels=*/this->dimensions[1],
                      /*kernel_height=*/kernel,
                       /*kernel_width=*/kernel));
 
@@ -105,7 +102,7 @@ void Data_gpu::convolution_layer(int batch, int input_channel, int width, int he
     
     cudnnConvolutionFwdAlgo_t convolution_algorithm;
 		checkCUDNN(
-  	cudnnGetConvolutionForwardAlgorithm(cudnn,
+  	cudnnGetConvolutionForwardAlgorithm(this->cudnn,
                                       input_descriptor,
                                       kernel_descriptor,
                                       convolution_descriptor,
@@ -117,7 +114,7 @@ void Data_gpu::convolution_layer(int batch, int input_channel, int width, int he
 
 		
 		size_t workspace_bytes = 0;
-		checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(cudnn,
+		checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(this->cudnn,
                                                  input_descriptor,
                                                  kernel_descriptor,
                                                  convolution_descriptor,
@@ -129,10 +126,10 @@ void Data_gpu::convolution_layer(int batch, int input_channel, int width, int he
 		void* d_workspace{nullptr};
 		cudaMalloc(&d_workspace, workspace_bytes);
 
-		int input_image_bytes = batch * input_channel * height * width * sizeof(float);
-		int output_image_bytes = batch * output_channel * height * width * sizeof(float);
+		int input_image_bytes = this->dimensions[0] * this->dimensions[1] * this->dimensions[2] * this->dimensions[3] * sizeof(float);
+		int output_image_bytes = this->dimensions[0] * output_channel * this->dimensions[2] * this->dimensions[3] * sizeof(float);
 
-    float* h_kernel = init_kernel(input_channel, output_channel, kernel);
+    float* h_kernel = init_kernel(this->dimensions[1], output_channel, kernel);
 
 		float* d_kernel{nullptr};
 		cudaMalloc(&d_kernel, sizeof(h_kernel));
@@ -148,7 +145,7 @@ void Data_gpu::convolution_layer(int batch, int input_channel, int width, int he
     
     const float alpha = 1.0f, beta = 0.0f;
 
-  	checkCUDNN(cudnnConvolutionForward(cudnn,
+  	checkCUDNN(cudnnConvolutionForward(this->cudnn,
                                    &alpha,
                                    input_descriptor,
                                    d_input,
@@ -175,15 +172,15 @@ void Data_gpu::convolution_layer(int batch, int input_channel, int width, int he
 	cudnnDestroyTensorDescriptor(output_descriptor);
 	cudnnDestroyFilterDescriptor(kernel_descriptor);
 	cudnnDestroyConvolutionDescriptor(convolution_descriptor);
-	current = h_output;
+	this->current = h_output;
 
 }
 
-void Data_gpu::relu(int batch, int input_channel, int width, int height, int output_channel)
+void Tensor_gpu::relu()
 {
 
-  int input_image_bytes = batch * input_channel * height * width * sizeof(float);
-  int output_image_bytes = batch * output_channel * height * width * sizeof(float);
+  int input_image_bytes = this->dimensions[0] * this->dimensions[1] * this->dimensions[2] * this->dimensions[3] * sizeof(float);
+  int output_image_bytes = this->dimensions[0] * this->dimensions[1] * this->dimensions[2] * this->dimensions[3] * sizeof(float);
 
   float* d_input{nullptr};
   cudaMalloc(&d_input, input_image_bytes);
@@ -198,20 +195,20 @@ void Data_gpu::relu(int batch, int input_channel, int width, int height, int out
   checkCUDNN(cudnnSetTensor4dDescriptor(input_descriptor,
                           /*format=*/CUDNN_TENSOR_NHWC,
                         /*dataType=*/CUDNN_DATA_FLOAT,
-                      /*batch_size=*/batch,
-                        /*channels=*/input_channel,
-                    /*image_height=*/height,
-                     /*image_width=*/width));
+                      /*batch_size=*/this->dimensions[0],
+                        /*channels=*/this->dimensions[1],
+                    /*image_height=*/this->dimensions[2],
+                     /*image_width=*/this->dimensions[3]));
 
   cudnnTensorDescriptor_t output_descriptor;
   checkCUDNN(cudnnCreateTensorDescriptor(&output_descriptor));
   checkCUDNN(cudnnSetTensor4dDescriptor(output_descriptor,
                         /*format=*/CUDNN_TENSOR_NHWC,
                       /*dataType=*/CUDNN_DATA_FLOAT,
-                    /*batch_size=*/batch,
-                      /*channels=*/output_channel,
-                  /*image_height=*/height,
-                   /*image_width=*/width));
+                    /*batch_size=*/this->dimensions[0],
+                      /*channels=*/this->dimensions[1],
+                  /*image_height=*/this->dimensions[2],
+                   /*image_width=*/this->dimensions[3]));
 
   const float alpha = 1.0f, beta = 0.0f;
   cudnnActivationDescriptor_t activation_descriptor;
@@ -221,7 +218,7 @@ void Data_gpu::relu(int batch, int input_channel, int width, int height, int out
                        /*reluNanOpt=*/CUDNN_PROPAGATE_NAN,
                         /*relu_coef=*/0));
 
-  checkCUDNN(cudnnActivationForward(cudnn,
+  checkCUDNN(cudnnActivationForward(this->cudnn,
                                 activation_descriptor,
                                 &alpha,
                                 input_descriptor,
@@ -240,5 +237,111 @@ void Data_gpu::relu(int batch, int input_channel, int width, int height, int out
   cudnnDestroyTensorDescriptor(output_descriptor);
   checkCUDNN(cudnnDestroyActivationDescriptor(activation_descriptor));
 
-  current = h_output;
+  this->current = h_output;
 }
+
+float* Tensor_gpu::get_value()
+{
+    return this->current;
+}
+
+__global__ void vecAdd(float *a, float *b, int n)
+{
+    // Get our global thread ID
+    int id = blockIdx.x*blockDim.x+threadIdx.x;
+ 
+    // Make sure we do not go out of bounds
+    if (id < n)
+        a[id] = a[id] + b[id];
+}
+
+__global__ void vecProduct(float *a, float *b, int n)
+{
+    // Get our global thread ID
+    int id = blockIdx.x*blockDim.x+threadIdx.x;
+ 
+    // Make sure we do not go out of bounds
+    if (id < n)
+        a[id] = a[id] * b[id];
+}
+
+std::vector<int> Tensor_gpu::get_dim()
+{
+    return this->dimensions;   
+}
+
+void Tensor_gpu::element_product(Tensor_gpu mul)
+{
+  float* value1 = this->get_value();
+  float* value2 = mul.get_value();
+  std::vector<int> dims1 = this->get_dim();
+  std::vector<int> dims2 = mul.get_dim();
+
+  int total_size = dims1[0];
+  for(int i = 1; i < dims1.size(); i++)
+    total_size *= dims1[i];
+  int bytes = total_size * sizeof(float);
+
+  float* v_a;
+  float* v_b;
+  cudaMalloc(&v_a, bytes);
+  cudaMalloc(&v_b, bytes);
+  cudaMemcpy( v_a, value1, bytes, cudaMemcpyHostToDevice);
+  cudaMemcpy( v_b, value2, bytes, cudaMemcpyHostToDevice);
+
+  int blockSize, gridSize;
+ 
+  // Number of threads in each thread block
+  blockSize = 1024;
+
+  // Number of thread blocks in grid
+  gridSize = (int)ceil((float)total_size/blockSize);
+
+  vecProduct<<< gridSize, blockSize >>>(v_a, v_b, total_size);
+
+  cudaMemcpy(value1, v_a, bytes, cudaMemcpyDeviceToHost);
+
+  cudaFree(v_a);
+  cudaFree(v_b);
+
+  this->current = &value1[0];
+
+}
+
+void Tensor_gpu::element_add(Tensor_gpu added)
+{
+  float* value1 = this->get_value();
+  float* value2 = added.get_value();
+  std::vector<int> dims1 = this->get_dim();
+  std::vector<int> dims2 = added.get_dim();
+
+  int total_size = dims1[0];
+  for(int i = 1; i < dims1.size(); i++)
+    total_size *= dims1[i];
+  int bytes = total_size * sizeof(float);
+
+  float* v_a;
+  float* v_b;
+  cudaMalloc(&v_a, bytes);
+  cudaMalloc(&v_b, bytes);
+  cudaMemcpy( v_a, value1, bytes, cudaMemcpyHostToDevice);
+  cudaMemcpy( v_b, value2, bytes, cudaMemcpyHostToDevice);
+
+  int blockSize, gridSize;
+ 
+  // Number of threads in each thread block
+  blockSize = 1024;
+
+  // Number of thread blocks in grid
+  gridSize = (int)ceil((float)total_size/blockSize);
+
+  vecAdd<<< gridSize, blockSize >>>(v_a, v_b, total_size);
+
+  cudaMemcpy(value1, v_a, bytes, cudaMemcpyDeviceToHost);
+
+  cudaFree(v_a);
+  cudaFree(v_b);
+
+  this->current = &value1[0];
+}
+

@@ -4,76 +4,73 @@ using namespace std;
 using namespace mkldnn;
 using namespace Fastops;
 
-memory::dim Data_cpu::product(const memory::dims &dims) {
+memory::dim calculate(const memory::dims &dims) {
 return std::accumulate(dims.begin(), dims.end(), (memory::dim)1,
         std::multiplies<memory::dim>());
 }
 
-void Data_cpu::init(int argc, char **argv)
-{
-    engine eng_new(engine::kind::cpu, 0);
-    eng = eng_new;
-    stream s_new(eng);
-    s = s_new;
 
-}
-
-void Data_cpu::set_data(std::vector<float> input, std::vector<int> input_size)
+void Tensor_cpu::set_data(std::vector<float> input, std::vector<int> input_size)
 {
+    engine new_eng(engine::kind::cpu, 0);
+    this->eng = new_eng;
+    stream new_stream(this->eng);
+    this->s = new_stream;
+
     using tag = memory::format_tag;
     using dt = memory::data_type;
 
     int total_size = input_size[0];
-    dimensions.push_back(input_size[0]);
+    this->dimensions.push_back(input_size[0]);
 
     for(int i = 1; i < input_size.size(); i++)
     {
         total_size *= input_size[i];
-        dimensions.push_back(input_size[i]);
+        this->dimensions.push_back(input_size[i]);
     }
 
-    memory::dims conv_src_tz = {dimensions[0], dimensions[1], dimensions[2], dimensions[3]};
+    memory::dims conv_src_tz = {this->dimensions[0], this->dimensions[1], this->dimensions[2], this->dimensions[3]};
     memory user_src_memory = memory(
-            { { conv_src_tz }, dt::f32, tag::nchw }, eng, input.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
+            { { conv_src_tz }, dt::f32, tag::nchw }, this->eng, input.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
     
-    current = user_src_memory;
+    this->current = user_src_memory;
     
     //dimensions also saved in 
     //memory_desc_t dst = get_desc(current) --> dst.dims = {batch, input_channel, height, width}
 
 }
 
-std::vector<float> Data_cpu::get_data(memory current_data)
+std::vector<float> Tensor_cpu::get_data()
 {
-    float *result = static_cast<float *>(current_data.get_data_handle());
-    std::vector<float> re {result, result + dimensions[0]*dimensions[1]*dimensions[2]*dimensions[3]};
+    float *result = static_cast<float *>(this->current.get_data_handle());
+    std::vector<float> re {result, result + this->dimensions[0]*this->dimensions[1]*this->dimensions[2]*this->dimensions[3]};
     return re;
 }
 
 
-void Data_cpu::convolution_layer(int output_channel, int kernel, int stride, int padding)
+void Tensor_cpu::convolution_layer(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, int output_channel, int kernel, int stride, int padding)
 {
 	using tag = memory::format_tag;
     using dt = memory::data_type;
 
 
-    memory::dims conv_src_tz = { dimensions[0], dimensions[1], dimensions[2], dimensions[3]};
-    memory::dims conv_weights_tz = { output_channel, dimensions[1], kernel, kernel };
+    memory::dims conv_src_tz = { this->dimensions[0], this->dimensions[1], this->dimensions[2], this->dimensions[3]};
+    memory::dims conv_weights_tz = { output_channel, this->dimensions[1], kernel, kernel };
     memory::dims conv_bias_tz = { output_channel };
-    memory::dims conv_dst_tz = { dimensions[0], output_channel, dimensions[2], dimensions[3]};
+    memory::dims conv_dst_tz = { this->dimensions[0], output_channel, this->dimensions[2], this->dimensions[3]};
     memory::dims conv_strides = { stride, stride };
     memory::dims conv_padding = { padding, padding };
 
     
-    std::vector<float> conv_weights(product(conv_weights_tz));
-    std::vector<float> conv_bias(product(conv_bias_tz));
+    std::vector<float> conv_weights(calculate(conv_weights_tz));
+    std::vector<float> conv_bias(calculate(conv_bias_tz));
 
     
     auto user_weights_memory
-            = memory({ { conv_weights_tz }, dt::f32, tag::oihw }, eng,
+            = memory({ { conv_weights_tz }, dt::f32, tag::oihw }, this->eng,
                     conv_weights.data());
     auto conv_user_bias_memory = memory(
-            { { conv_bias_tz }, dt::f32, tag::x }, eng, conv_bias.data());
+            { { conv_bias_tz }, dt::f32, tag::x }, this->eng, conv_bias.data());
 
     auto conv_src_md = memory::desc({ conv_src_tz }, dt::f32, tag::any);
     auto conv_bias_md = memory::desc({ conv_bias_tz }, dt::f32, tag::any);
@@ -85,47 +82,126 @@ void Data_cpu::convolution_layer(int output_channel, int kernel, int stride, int
             algorithm::convolution_direct, conv_src_md, conv_weights_md, conv_bias_md,
             conv_dst_md, conv_strides, conv_padding, conv_padding);
 
-    auto conv_prim_desc = convolution_forward::primitive_desc(conv_desc, eng);
+    auto conv_prim_desc = convolution_forward::primitive_desc(conv_desc, this->eng);
 
-    auto conv_src_memory = current;
-    if (conv_prim_desc.src_desc() != current.get_desc()) {
-        conv_src_memory = memory(conv_prim_desc.src_desc(), eng);
-        net.push_back(reorder(current, conv_src_memory));
-        net_args.push_back({ { MKLDNN_ARG_FROM, current },
+    auto conv_src_memory = this->current;
+    if (conv_prim_desc.src_desc() != this->current.get_desc()) {
+        conv_src_memory = memory(conv_prim_desc.src_desc(), this->eng);
+        net.push_back(reorder(this->current, conv_src_memory));
+        net_args.push_back({ { MKLDNN_ARG_FROM, this->current },
                 { MKLDNN_ARG_TO, conv_src_memory } });
     }
 
     auto conv_weights_memory = user_weights_memory;
     if (conv_prim_desc.weights_desc() != user_weights_memory.get_desc()) {
-        conv_weights_memory = memory(conv_prim_desc.weights_desc(), eng);
+        conv_weights_memory = memory(conv_prim_desc.weights_desc(), this->eng);
         reorder(user_weights_memory, conv_weights_memory)
-                .execute(s, user_weights_memory, conv_weights_memory);
+                .execute(this->s, user_weights_memory, conv_weights_memory);
     }
 
-    current = memory(conv_prim_desc.dst_desc(), eng);
-	dimensions[1] = output_channel;
+    this->current = memory(conv_prim_desc.dst_desc(), this->eng);
+	this->dimensions[1] = output_channel;
 
 	net.push_back(convolution_forward(conv_prim_desc));
     net_args.push_back({ { MKLDNN_ARG_SRC, conv_src_memory },
             { MKLDNN_ARG_WEIGHTS, conv_weights_memory },
             { MKLDNN_ARG_BIAS, conv_user_bias_memory },
-            { MKLDNN_ARG_DST, current} });
+            { MKLDNN_ARG_DST, this->current} });
 
 }
 
-void Data_cpu::relu()
+void Tensor_cpu::relu(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args)
 {
     const float negative_slope = 1.0f;
 
     auto relu_desc = eltwise_forward::desc(prop_kind::forward_inference,
-            algorithm::eltwise_relu, current.get_desc(),
+            algorithm::eltwise_relu, this->current.get_desc(),
             negative_slope);
-    auto relu_prim_desc = eltwise_forward::primitive_desc(relu_desc, eng);
+    auto relu_prim_desc = eltwise_forward::primitive_desc(relu_desc, this->eng);
 
     net.push_back(eltwise_forward(relu_prim_desc));
-    net_args.push_back({ { MKLDNN_ARG_SRC, current },
-            { MKLDNN_ARG_DST, current } });
+    net_args.push_back({ { MKLDNN_ARG_SRC, this->current },
+            { MKLDNN_ARG_DST, this->current } });
 }
+
+memory Tensor_cpu::get_value()
+{
+    return this->current;
+}
+
+std::vector<int> Tensor_cpu::get_dim()
+{
+    return this->dimensions;   
+}
+
+void Tensor_cpu::element_product(Tensor_cpu mul)
+{
+    memory value1 = this->get_value();
+    memory value2 = mul.get_value();
+    std::vector<int> dims1 = this->get_dim();
+    std::vector<int> dims2 = mul.get_dim();
+
+    float* a = static_cast<float *>(value1.get_data_handle());
+    float* b = static_cast<float *>(value2.get_data_handle());
+
+    int size = dims1[0]*dims1[1]*dims1[2]*dims1[3];
+
+    std::vector<float> re {a, a + size};
+    std::vector<float> re2 {b, b + size};
+
+    tbb::parallel_for( tbb::blocked_range<int>(0,re.size()),
+                       [&](tbb::blocked_range<int> r)
+    {
+        for (int i=r.begin(); i<r.end(); ++i)
+        {
+            re[i] = re[i]*re2[i];
+        }
+    });
+
+    using tag = memory::format_tag;
+    using dt = memory::data_type;
+    memory::dims conv_src_tz = {dims1[0], dims1[1], dims1[2], dims1[3]};
+    memory user_src_memory = memory(
+            { { conv_src_tz }, dt::f32, tag::nchw }, this->eng, re.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
+    
+    this->current = user_src_memory;
+    
+}
+
+void Tensor_cpu::element_add(Tensor_cpu added)
+{
+    memory value1 = this->get_value();
+    memory value2 = added.get_value();
+    std::vector<int> dims1 = this->get_dim();
+    std::vector<int> dims2 = added.get_dim();
+
+    float* a = static_cast<float *>(value1.get_data_handle());
+    float* b = static_cast<float *>(value2.get_data_handle());
+
+    int size = dims1[0]*dims1[1]*dims1[2]*dims1[3];
+
+    std::vector<float> re {a, a + size};
+    std::vector<float> re2 {b, b + size};
+
+    tbb::parallel_for( tbb::blocked_range<int>(0,re.size()),
+                       [&](tbb::blocked_range<int> r)
+    {
+        for (int i=r.begin(); i<r.end(); ++i)
+        {
+            re[i] = re[i]+re2[i];
+        }
+    });
+
+    using tag = memory::format_tag;
+    using dt = memory::data_type;
+    memory::dims conv_src_tz = {dims1[0], dims1[1], dims1[2], dims1[3]};
+    memory user_src_memory = memory(
+            { { conv_src_tz }, dt::f32, tag::nchw }, this->eng, re.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
+    
+    this->current = user_src_memory;
+    
+}
+
 
 
 
