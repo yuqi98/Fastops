@@ -4,13 +4,8 @@ using namespace std;
 using namespace mkldnn;
 using namespace Fastops;
 
-memory::dim calculate(const memory::dims &dims) {
-return std::accumulate(dims.begin(), dims.end(), (memory::dim)1,
-        std::multiplies<memory::dim>());
-}
 
-
-void Tensor_cpu::set_data(std::vector<float> input, std::vector<int> input_size)
+void Tensor_cpu::set_data(std::vector<float> input, std::vector<int> input_size, int flag)
 {
     engine new_eng(engine::kind::cpu, 0);
     this->eng = new_eng;
@@ -20,19 +15,33 @@ void Tensor_cpu::set_data(std::vector<float> input, std::vector<int> input_size)
     using tag = memory::format_tag;
     using dt = memory::data_type;
 
-    int total_size = input_size[0];
     this->dimensions.push_back(input_size[0]);
 
     for(int i = 1; i < input_size.size(); i++)
     {
-        total_size *= input_size[i];
         this->dimensions.push_back(input_size[i]);
     }
+    memory::dims conv_src_tz;
+    if(input_size.size() == 4)
+        conv_src_tz = {this->dimensions[0], this->dimensions[1], this->dimensions[2], this->dimensions[3]};
+    if(input_size.size() == 3)
+        conv_src_tz = {this->dimensions[0], this->dimensions[1], this->dimensions[2]};
+    if(input_size.size() == 2)
+        conv_src_tz = {this->dimensions[0], this->dimensions[1]};
+    if(input_size.size() == 1)
+        conv_src_tz = {this->dimensions[0]};
 
-    memory::dims conv_src_tz = {this->dimensions[0], this->dimensions[1], this->dimensions[2], this->dimensions[3]};
-    memory user_src_memory = memory(
-            { { conv_src_tz }, dt::f32, tag::nchw }, this->eng, input.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
-    
+    memory user_src_memory;
+    if(flag == 1)
+        user_src_memory = memory(
+                { { conv_src_tz }, dt::f32, tag::nchw }, this->eng, input.data()); //offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
+    if(flag == 2)
+        user_src_memory = memory(
+                { { conv_src_tz }, dt::f32, tag::oihw }, this->eng, input.data());   
+    if(flag == 3)
+        user_src_memory = memory(
+                { { conv_src_tz }, dt::f32, tag::x }, this->eng, input.data()); 
+
     this->current = user_src_memory;
     
     //dimensions also saved in 
@@ -43,28 +52,34 @@ void Tensor_cpu::set_data(std::vector<float> input, std::vector<int> input_size)
 std::vector<float> Tensor_cpu::get_data()
 {
     float *result = static_cast<float *>(this->current.get_data_handle());
-    std::vector<float> re {result, result + this->dimensions[0]*this->dimensions[1]*this->dimensions[2]*this->dimensions[3]};
+    int total_size = 1;
+    for(int i = 0; i < this->dimensions.size(); i++)
+    {
+        total_size *= this->dimensions[i];
+    }
+    std::vector<float> re {result, result + total_size};
     return re;
 }
 
 
-void Tensor_cpu::convolution_layer(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, int output_channel, int kernel, int stride, int padding)
+void Tensor_cpu::convolution_layer(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, Tensor_cpu kernel, Tensor_cpu bias, int stride, int padding)
 {
 	using tag = memory::format_tag;
     using dt = memory::data_type;
 
 
     memory::dims conv_src_tz = { this->dimensions[0], this->dimensions[1], this->dimensions[2], this->dimensions[3]};
-    memory::dims conv_weights_tz = { output_channel, this->dimensions[1], kernel, kernel };
-    memory::dims conv_bias_tz = { output_channel };
-    memory::dims conv_dst_tz = { this->dimensions[0], output_channel, this->dimensions[2], this->dimensions[3]};
+    std::vector<int> dims_kernel = kernel.get_dim();
+    std::vector<int> dims_bias = bias.get_dim();
+    memory::dims conv_weights_tz = {dims_kernel[0], dims_kernel[1], dims_kernel[2], dims_kernel[3]};
+    memory::dims conv_bias_tz = {dims_bias[0]};
+    memory::dims conv_dst_tz = { this->dimensions[0], dims_kernel[0], this->dimensions[2], this->dimensions[3]};
     memory::dims conv_strides = { stride, stride };
     memory::dims conv_padding = { padding, padding };
 
     
-    std::vector<float> conv_weights(calculate(conv_weights_tz));
-    std::vector<float> conv_bias(calculate(conv_bias_tz));
-
+    std::vector<float> conv_weights = kernel.get_data();
+    std::vector<float> conv_bias = bias.get_data();
     
     auto user_weights_memory
             = memory({ { conv_weights_tz }, dt::f32, tag::oihw }, this->eng,
@@ -100,7 +115,7 @@ void Tensor_cpu::convolution_layer(vector<primitive> &net, vector<unordered_map<
     }
 
     this->current = memory(conv_prim_desc.dst_desc(), this->eng);
-	this->dimensions[1] = output_channel;
+	this->dimensions[1] = dims_kernel[0];
 
 	net.push_back(convolution_forward(conv_prim_desc));
     net_args.push_back({ { MKLDNN_ARG_SRC, conv_src_memory },

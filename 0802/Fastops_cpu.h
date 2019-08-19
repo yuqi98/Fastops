@@ -23,11 +23,11 @@ class Tensor_cpu{
 		engine eng;
 		stream s;
 
-		void set_data(std::vector<float> input, std::vector<int> input_size);
+		void set_data(std::vector<float> input, std::vector<int> input_size, int flag);
 
 		std::vector<float> get_data();
 
-		void convolution_layer(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, int output_channel, int kernel, int stride, int padding);
+		void convolution_layer(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, Tensor_cpu kernel, Tensor_cpu bias, int stride, int padding);
 
 		void relu(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args);
 
