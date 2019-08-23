@@ -40,12 +40,9 @@ class Tensor_cpu{
 		void element_add(Tensor_cpu added);
 
 	private:
-		
-
 		memory current;
 		
 		vector<int> dimensions;
-
 };
 
 }
