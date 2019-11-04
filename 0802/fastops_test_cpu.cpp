@@ -9,7 +9,7 @@
 
 #include "Fastops_cpu.h"
 
-using namespace mkldnn;
+using namespace dnnl;
 
 using namespace std;
 

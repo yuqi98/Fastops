@@ -10,11 +10,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include "mkldnn.hpp"
+#include "dnnl.hpp"
+
 #include <tbb/parallel_for.h>
 
 using namespace std;
-using namespace mkldnn;
+using namespace dnnl;
 
 namespace Fastops{
 
@@ -31,6 +32,7 @@ class Tensor_cpu{
 
 		void relu(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args);
 
+		void fully_connected(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, Tensor_cpu kernel, Tensor_cpu bias);
 		memory get_value();
 
 		std::vector<int> get_dim();

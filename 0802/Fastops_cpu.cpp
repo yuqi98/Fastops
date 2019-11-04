@@ -1,7 +1,7 @@
 #include "Fastops_cpu.h"
 
 using namespace std;
-using namespace mkldnn;
+using namespace dnnl;
 using namespace Fastops;
 
 
@@ -103,8 +103,8 @@ void Tensor_cpu::convolution_layer(vector<primitive> &net, vector<unordered_map<
     if (conv_prim_desc.src_desc() != this->current.get_desc()) {
         conv_src_memory = memory(conv_prim_desc.src_desc(), this->eng);
         net.push_back(reorder(this->current, conv_src_memory));
-        net_args.push_back({ { MKLDNN_ARG_FROM, this->current },
-                { MKLDNN_ARG_TO, conv_src_memory } });
+        net_args.push_back({ { DNNL_ARG_FROM, this->current },
+                { DNNL_ARG_TO, conv_src_memory } });
     }
 
     auto conv_weights_memory = user_weights_memory;
@@ -118,10 +118,10 @@ void Tensor_cpu::convolution_layer(vector<primitive> &net, vector<unordered_map<
 	this->dimensions[1] = dims_kernel[0];
 
 	net.push_back(convolution_forward(conv_prim_desc));
-    net_args.push_back({ { MKLDNN_ARG_SRC, conv_src_memory },
-            { MKLDNN_ARG_WEIGHTS, conv_weights_memory },
-            { MKLDNN_ARG_BIAS, conv_user_bias_memory },
-            { MKLDNN_ARG_DST, this->current} });
+    net_args.push_back({ { DNNL_ARG_SRC, conv_src_memory },
+            { DNNL_ARG_WEIGHTS, conv_weights_memory },
+            { DNNL_ARG_BIAS, conv_user_bias_memory },
+            { DNNL_ARG_DST, this->current} });
 
 }
 
@@ -135,8 +135,74 @@ void Tensor_cpu::relu(vector<primitive> &net, vector<unordered_map<int, memory>>
     auto relu_prim_desc = eltwise_forward::primitive_desc(relu_desc, this->eng);
 
     net.push_back(eltwise_forward(relu_prim_desc));
-    net_args.push_back({ { MKLDNN_ARG_SRC, this->current },
-            { MKLDNN_ARG_DST, this->current } });
+    net_args.push_back({ { DNNL_ARG_SRC, this->current },
+            { DNNL_ARG_DST, this->current } });
+}
+
+void Tensor_cpu::fully_connected(vector<primitive> &net, vector<unordered_map<int, memory>> &net_args, Tensor_cpu kernel, Tensor_cpu bias)
+{
+
+    using tag = memory::format_tag;
+    using dt = memory::data_type;
+
+
+    memory::dims fc_src_tz = { this->dimensions[0], this->dimensions[1], this->dimensions[2], this->dimensions[3]};
+    std::vector<int> dims_kernel = kernel.get_dim();
+    std::vector<int> dims_bias = bias.get_dim();
+    memory::dims fc_weights_tz = {dims_kernel[0], dims_kernel[1], dims_kernel[2], dims_kernel[3]};
+    memory::dims fc_bias_tz = {dims_bias[0]};
+    memory::dims fc_dst_tz = { this->dimensions[0], dims_kernel[0], this->dimensions[2], this->dimensions[3]};
+        // fc6 inner product {batch, 256, 6, 6} (x) {4096, 256, 6, 6}-> {batch,
+    // 4096}
+    // memory::dims fc6_src_tz = {batch, 256, 6, 6};
+    // memory::dims fc6_weights_tz = {4096, 256, 6, 6};
+    // memory::dims fc6_bias_tz = {4096};
+    // memory::dims fc6_dst_tz = {batch, 4096};
+
+    std::vector<float> fc_weights = kernel.get_data();
+    std::vector<float> fc_bias = bias.get_data();
+
+    // create memory for user data
+    auto fc_user_weights_memory
+            = memory({{fc_weights_tz}, dt::f32, tag::oihw}, eng);
+    //write_to_dnnl_memory(fc_weights.data(), fc_user_weights_memory);
+    auto fc_user_bias_memory = memory({{fc_bias_tz}, dt::f32, tag::x}, eng);
+    //write_to_dnnl_memory(fc_bias.data(), fc_user_bias_memory);
+
+    // create memory descriptors for convolution data w/ no specified format
+    auto fc_src_md = memory::desc({fc_src_tz}, dt::f32, tag::any);
+    auto fc_bias_md = memory::desc({fc_bias_tz}, dt::f32, tag::any);
+    auto fc_weights_md = memory::desc({fc_weights_tz}, dt::f32, tag::any);
+    auto fc_dst_md = memory::desc({fc_dst_tz}, dt::f32, tag::any);
+
+    // create a inner_product
+    auto fc_desc = inner_product_forward::desc(prop_kind::forward_inference,
+            fc_src_md, fc_weights_md, fc_bias_md, fc_dst_md);
+    auto fc_prim_desc = inner_product_forward::primitive_desc(fc_desc, eng);
+
+    auto fc_src_memory = this->current;
+    if (fc_prim_desc.src_desc() != fc_src_memory.get_desc()) {
+        fc_src_memory = memory(fc_prim_desc.src_desc(), eng);
+        net.push_back(reorder(this->current, fc_src_memory));
+        net_args.push_back({{DNNL_ARG_FROM, this->current},
+                {DNNL_ARG_TO, fc_src_memory}});
+    }
+
+    auto fc_weights_memory = fc_user_weights_memory;
+    if (fc_prim_desc.weights_desc() != fc_user_weights_memory.get_desc()) {
+        fc_weights_memory = memory(fc_prim_desc.weights_desc(), this->eng);
+        reorder(fc_user_weights_memory, fc_weights_memory)
+                .execute(this->s, fc_user_weights_memory, fc_weights_memory);
+    }
+    this->current = memory(fc_prim_desc.dst_desc(), this->eng);
+    this->dimensions[1] = dims_kernel[0];
+
+    // create convolution primitive and add it to net
+    net.push_back(inner_product_forward(fc_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, fc_src_memory},
+            {DNNL_ARG_WEIGHTS, fc_weights_memory},
+            {DNNL_ARG_BIAS, fc_user_bias_memory},
+            {DNNL_ARG_DST, this->current}});
 }
 
 memory Tensor_cpu::get_value()
